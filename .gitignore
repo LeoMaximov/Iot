@@ -1,0 +1,18 @@
+# Credenciais locais (use secrets.example.h como modelo)
+secrets.h
+
+# Saída de compilação
+build/
+*.bin
+*.elf
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Dados simulados (só para testar os scripts; nunca entram no relatório)
+dados/simulados/
+
+# Datasets externos (licença do PhysioNet não permite redistribuir)
+dados/externos/

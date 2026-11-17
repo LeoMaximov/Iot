@@ -1,0 +1,10 @@
+{
+  "teste": "T2_170spm",
+  "inicio": "2026-11-15T21:32:58",
+  "porta": "COM7",
+  "ref_bpm": null,
+  "ref_spm": 170.0,
+  "nota": "T2 cadência. Braçadeira no braço, passos no lugar acompanhando metrônomo a 170 SPM. Contagem manual: 170 passos em 60 s.",
+  "simulado": false,
+  "passos_manuais": 170
+}

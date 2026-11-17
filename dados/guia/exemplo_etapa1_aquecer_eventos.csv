@@ -1,0 +1,4 @@
+t,tipo,texto,decisao
+0.0,etapa,"AQUECER 1/8: 6.0 km/h por 67 s, alvo 142-154 BPM",
+67.0,decisao,"AQUECER: mediana 92 BPM incompatível com cadência de 141 SPM; leitura suspeita, plano mantido",manter_bpm_suspeito
+67.0,etapa,"TIRO 2/8: 8.5 km/h por 22 s, alvo 167-179 BPM",

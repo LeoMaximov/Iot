@@ -1,0 +1,26 @@
+t,tipo,texto,decisao
+0.0,etapa,"AQUECER 1/8: 6.0 km/h por 67 s, alvo 142-154 BPM",
+67.0,decisao,"AQUECER: mediana 92 BPM incompatível com cadência de 141 SPM; leitura suspeita, plano mantido",manter_bpm_suspeito
+67.0,etapa,"TIRO 2/8: 8.5 km/h por 22 s, alvo 167-179 BPM",
+87.0,aviso,Cadência indica caminhada; a etapa pede trote,
+89.0,decisao,"TIRO: mediana 94 BPM, abaixo da zona: aumenta 0,5 km/h",aumentar
+89.0,etapa,"RECUPERAR 3/8: 10.0 km/h por 33 s, alvo 142-154 BPM",
+109.0,aviso,Cadência indica parado; a etapa pede corrida,
+122.0,decisao,RECUPERAR: BPM sem leitura suficiente (0 de 17); plano mantido,manter_sem_dados
+122.0,etapa,"TIRO 4/8: 10.0 km/h por 22 s, alvo 167-179 BPM",
+142.0,aviso,Cadência indica parado; a etapa pede corrida,
+144.0,decisao,TIRO: BPM sem leitura suficiente (0 de 12); plano mantido,manter_sem_dados
+144.0,etapa,"RECUPERAR 5/8: 10.0 km/h por 33 s, alvo 142-154 BPM",
+164.0,aviso,Cadência indica parado; a etapa pede corrida,
+177.0,decisao,RECUPERAR: BPM sem leitura suficiente (0 de 17); plano mantido,manter_sem_dados
+177.0,etapa,"TIRO 6/8: 10.0 km/h por 22 s, alvo 167-179 BPM",
+197.0,aviso,Cadência indica parado; a etapa pede corrida,
+199.0,decisao,TIRO: BPM sem leitura suficiente (0 de 12); plano mantido,manter_sem_dados
+199.0,etapa,"RECUPERAR 7/8: 10.0 km/h por 33 s, alvo 142-154 BPM",
+219.0,aviso,Cadência indica parado; a etapa pede corrida,
+232.0,decisao,RECUPERAR: BPM sem leitura suficiente (0 de 17); plano mantido,manter_sem_dados
+232.0,etapa,"DESAQUECER 8/8: 8.5 km/h por 67 s, alvo 129-142 BPM",
+252.0,aviso,Cadência indica parado; a etapa pede trote,
+282.0,aviso,Cadência indica parado; a etapa pede trote,
+299.0,decisao,DESAQUECER: BPM sem leitura suficiente (0 de 34); plano mantido,manter_sem_dados
+299.0,fim,Treino concluído,

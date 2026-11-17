@@ -1,0 +1,10 @@
+{
+  "teste": "T3_esteira_efetivo",
+  "inicio": "2026-11-15T21:47:59",
+  "porta": "COM8",
+  "ref_bpm": 80.0,
+  "ref_spm": null,
+  "nota": "T3 esteira: 2 min 20 s de gravação efetiva (recorte de 0 a 140 s da gravação de 4 min). Caminhada, trote e caminhada. Referência de BPM: 80 (valor único). Contagem manual: 406 passos.",
+  "simulado": false,
+  "passos_manuais": 406
+}

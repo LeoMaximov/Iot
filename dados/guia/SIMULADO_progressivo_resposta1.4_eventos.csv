@@ -1,0 +1,13 @@
+t,tipo,texto,decisao
+0.0,etapa,"AQUECER 1/5: 6.5 km/h por 180 s, alvo 127-140 BPM",
+180.0,decisao,"AQUECER: mediana 155 BPM, acima da zona: reduz 0,5 km/h",reduzir
+180.0,etapa,"LEVE 2/5: 7.0 km/h por 300 s, alvo 140-153 BPM",
+480.0,decisao,"LEVE: mediana 163 BPM, acima da zona: reduz 0,5 km/h",reduzir
+480.0,etapa,"MODERADO 3/5: 8.0 km/h por 300 s, alvo 153-166 BPM",
+780.0,decisao,"MODERADO: mediana 179 BPM, acima da zona: reduz 0,5 km/h",reduzir
+780.0,etapa,"FORTE 4/5: 9.5 km/h por 180 s, alvo 166-180 BPM",
+787.0,alerta,FC 184 acima de 183 BPM: recuperação imediata e zonas 4+ reduzidas em 1 km/h,reduzir
+787.0,etapa,"ALERTA 5/6: 3.0 km/h por 120 s, alvo 127-140 BPM",
+907.0,etapa,"DESAQUECER 6/6: 5.0 km/h por 180 s, alvo 127-140 BPM",
+1087.0,decisao,"DESAQUECER: mediana 133 BPM, dentro da zona: mantém",manter
+1087.0,fim,Treino concluído,
