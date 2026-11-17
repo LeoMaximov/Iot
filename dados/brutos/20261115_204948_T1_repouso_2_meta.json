@@ -1,0 +1,10 @@
+{
+  "teste": "T1_repouso_2",
+  "inicio": "2026-11-15T20:49:48",
+  "porta": "COM8",
+  "ref_bpm": null,
+  "ref_spm": null,
+  "nota": "Repetição do T1. Braçadeira no braço, sentado e parado. Referência de BPM medida durante toda a gravação. Linha de meta em 62 BPM: valor-alvo, não é referência medida.",
+  "simulado": false,
+  "meta_bpm": 62.0
+}

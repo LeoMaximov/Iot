@@ -1,3 +1,11 @@
+// GCP-Esteira — Unidade de painel (visor) — Entrega V1
+//
+// Recebe os pacotes da braçadeira por ESP-NOW, mostra BPM e cadência no TFT,
+// publica a telemetria no ThingsBoard por MQTT a 1 Hz e imprime cada pacote
+// recebido em linhas "CSV,R,..." para o tools/serial_logger.py.
+//
+// Antes de compilar: copie secrets.example.h para secrets.h e preencha.
+
 #include <Arduino.h>
 #include <WiFi.h>
 #include <esp_now.h>
@@ -5,85 +13,142 @@
 #include <TFT_eSPI.h>
 #include <SPI.h>
 #include <ArduinoJson.h>
+#include "pacote.h"
+#include "espnow_compat.h"
+#include "secrets.h"
+#include <esp_mac.h>
+
+// MAC do rádio Wi-Fi lido direto da eFuse (ver macDesta() em emissora.ino).
+String macDesta() {
+  uint8_t mac[6];
+  esp_read_mac(mac, ESP_MAC_WIFI_STA);
+  char texto[18];
+  snprintf(texto, sizeof(texto), "%02X:%02X:%02X:%02X:%02X:%02X",
+           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  return String(texto);
+}
 
 // -------------------------------------------------------------------
-// CONFIGURAÇÕES DE REDE E THINGSBOARD
+// CONFIGURAÇÃO
 // -------------------------------------------------------------------
-const char* WIFI_SSID = "A22";
-const char* WIFI_PASS = "leonardo1";
+const uint8_t  PINO_BACKLIGHT        = 4;
+const uint32_t PERIODO_DISPLAY_MS    = 250;   // 4 Hz
+const uint32_t PERIODO_MQTT_MS       = 1000;  // 1 Hz
+const uint32_t TIMEOUT_ENLACE_MS     = 1000;  // sem pacote -> braçadeira fora do ar
+const uint32_t DURACAO_TELA_CONCLUIDO = 5000; // tela de "PARABENS!"
+const uint32_t TEMPO_TENTATIVA_WIFI_MS = 15000;
+const uint32_t ESPERA_WIFI_MS        = 60000;
+const uint32_t INTERVALO_MQTT_MS     = 5000;  // entre tentativas de conexão
 
-const char* TB_SERVER   = "10.68.103.45"; 
-const int   TB_PORT     = 1883;
-const char* TB_TOKEN = "novo123";
-
-// Constante do limiar de presença do dedo no sensor MAX30102
-const int32_t LIMIAR_DEDO_PRESENTE = 50000;
+const char *TOPICO_TELEMETRIA  = "v1/devices/me/telemetry";
+const char *TOPICO_RPC_PEDIDOS = "v1/devices/me/rpc/request/+";
+const char *PREFIXO_RPC_PEDIDO = "v1/devices/me/rpc/request/";
+const char *PREFIXO_RPC_RESPOSTA = "v1/devices/me/rpc/response/";
 
 // -------------------------------------------------------------------
-// ESTRUTURA DE DADOS RECEBIDA VIA ESP-NOW
+// ESTADO
 // -------------------------------------------------------------------
-typedef struct struct_message {
-  float heartBPM;
-  int32_t irValue;
-  float ax;
-  float ay;
-  float az;
-} struct_message;
-
-struct_message incomingData;
-
-// Instâncias
 TFT_eSPI tft = TFT_eSPI();
 WiFiClient espClient;
 PubSubClient client(espClient);
 
+// Pacotes passam do callback do ESP-NOW (tarefa do Wi-Fi) para o loop por esta fila.
+struct Recebido {
+  pacote_t pacote;
+  uint32_t tRxMs;
+  int8_t   rssi;
+};
+QueueHandle_t filaPacotes = NULL;
+volatile uint32_t descartadosFila = 0;
+
+pacote_t ultimo;
+bool     temPacote = false;
+uint32_t ultimoRxMs = 0;
+int      ultimoRssi = 0;
+uint32_t pacotesRx = 0;
+uint32_t pacotesPerdidos = 0;
+
+// Treino
+bool treinoConcluido = false;   // mostrando "PARABENS!" por 5 s
+bool treinoFinalizado = false;  // layout pós-treino (fundo verde)
+uint32_t tempoInicioConcluido = 0;
+uint32_t passosBase = 0;        // passos da braçadeira quando o treino (re)começou
+uint32_t passosFinais = 0;      // congelado ao concluir
+
+// Etapa do guia de cardio (V2), recebida pelo RPC definirEtapa.
+bool     etapaAtiva = false;
+char     etapaNome[12] = "";
+float    etapaVel = 0.0f;       // km/h recomendada
+uint32_t etapaFimMs = 0;        // millis() em que a etapa termina
+uint16_t etapaZmin = 0, etapaZmax = 0; // faixa de BPM da zona-alvo
+uint8_t  etapaIndice = 0, etapaTotal = 0;
+bool     etapaAlerta = false;   // etapa de segurança: barra de título vermelha
+
+// Rede
+enum EstadoRede { REDE_TENTANDO, REDE_CONECTADA, REDE_ESPERA };
+EstadoRede estadoRede = REDE_TENTANDO;
+uint32_t tEstadoRede = 0;
+uint32_t publicacoesOk = 0;
+uint32_t publicacoesFalha = 0;
+
 // -------------------------------------------------------------------
-// VARIÁVEIS GLOBAIS DE CONTROLE E ESTADO
+// ESP-NOW
 // -------------------------------------------------------------------
-unsigned long contadorPassos = 0;
-float prevMagnitude = 0.0;
-bool stepDetected = false;
+// Chamada pelo callback de recepção (espnow_compat.h), na tarefa do Wi-Fi.
+void trataPacoteRecebido(const uint8_t *dados, int len, int rssi) {
+  if (len != (int)sizeof(pacote_t) || filaPacotes == NULL) return;
+  Recebido r;
+  memcpy(&r.pacote, dados, sizeof(pacote_t));
+  if (r.pacote.versao != PACOTE_VERSAO) return;
+  r.tRxMs = millis();
+  r.rssi = (int8_t)rssi;
+  if (xQueueSend(filaPacotes, &r, 0) != pdTRUE) descartadosFila++;
+}
 
-unsigned long lastDisplayUpdate = 0;
-unsigned long lastMqttSend = 0;
+bool enlaceAtivo(uint32_t agora) {
+  return temPacote && (agora - ultimoRxMs) < TIMEOUT_ENLACE_MS;
+}
 
-// Estados do Treino e Temporizadores
-bool treinoConcluido = false;        // Bloqueia a tela durante os 5s de "PARABENS!"
-bool treinoFinalizado = false;       // Ativa o modo pós-treino (Fundo Verde + Pedômetro Azul)
-unsigned long tempoInicioConcluido = 0;
-const unsigned long DURACAO_TELA_CONCLUIDO = 5000; // 5 segundos de exibição do aviso
+uint32_t passosDoTreino() {
+  if (treinoConcluido || treinoFinalizado) return passosFinais;
+  return temPacote ? (ultimo.passos - passosBase) : 0;
+}
 
-// -------------------------------------------------------------------
-// CALLBACK DE RECEBIMENTO ESP-NOW
-// -------------------------------------------------------------------
-#if defined(ESP_ARDUINO_VERSION_MAJOR) && ESP_ARDUINO_VERSION_MAJOR >= 3
-void OnDataRecv(const esp_now_recv_info *info, const uint8_t *incomingBytes, int len) {
-#else
-void OnDataRecv(const uint8_t *mac_addr, const uint8_t *incomingBytes, int len) {
-#endif
-  if (len == sizeof(incomingData)) {
-    memcpy(&incomingData, incomingBytes, sizeof(incomingData));
-
-    // Só calcula passos se o treino ainda não tiver sido concluído
-    if (!treinoConcluido && !treinoFinalizado) {
-      float magnitude = sqrt(incomingData.ax * incomingData.ax + 
-                             incomingData.ay * incomingData.ay + 
-                             incomingData.az * incomingData.az);
-
-      // Sensibilidade calibrada para maior precisão na esteira (Limiar 1.04)
-      if (magnitude > 1.04 && prevMagnitude <= 1.04 && !stepDetected) {
-        contadorPassos++;
-        stepDetected = true;
-      } else if (magnitude < 1.01) {
-        stepDetected = false;
+void processaFila() {
+  Recebido r;
+  while (xQueueReceive(filaPacotes, &r, 0) == pdTRUE) {
+    uint32_t intervaloChegada = 0;
+    if (temPacote) {
+      intervaloChegada = r.tRxMs - ultimoRxMs;
+      if (r.pacote.seq > ultimo.seq + 1) {
+        pacotesPerdidos += r.pacote.seq - ultimo.seq - 1;
+      } else if (r.pacote.seq <= ultimo.seq) {
+        // seq voltou: a braçadeira reiniciou. Recomeça as contagens.
+        pacotesRx = 0;
+        pacotesPerdidos = 0;
+        passosBase = 0;
       }
-      prevMagnitude = magnitude;
     }
+    pacotesRx++;
+    ultimo = r.pacote;
+    ultimoRxMs = r.tRxMs;
+    ultimoRssi = r.rssi;
+    temPacote = true;
+
+    Serial.printf("CSV,R,%lu,%lu,%lu,%lu,%d,%lu,%.1f,%.1f,%lu,%ld,%u,%ld,%lu,%.3f,%.3f,%.3f\n",
+                  (unsigned long)r.tRxMs, (unsigned long)r.pacote.seq,
+                  (unsigned long)r.pacote.t_ms, (unsigned long)intervaloChegada,
+                  r.rssi, (unsigned long)pacotesPerdidos,
+                  r.pacote.bpm, r.pacote.spm, (unsigned long)r.pacote.passos,
+                  (long)r.pacote.irValue, r.pacote.contato,
+                  r.pacote.latencia_us == LATENCIA_INVALIDA ? -1L : (long)r.pacote.latencia_us,
+                  (unsigned long)r.pacote.falhas_envio,
+                  r.pacote.ax, r.pacote.ay, r.pacote.az);
   }
 }
 
 // -------------------------------------------------------------------
-// RENDERIZAÇÃO DA TELA DE PARABÉNS (DURANTE OS 5 SEGUNDOS)
+// DISPLAY
 // -------------------------------------------------------------------
 void exibirTelaConcluido() {
   tft.fillScreen(TFT_BLACK);
@@ -98,210 +163,355 @@ void exibirTelaConcluido() {
 
   tft.drawRoundRect(10, 170, 220, 55, 8, TFT_YELLOW);
   tft.setTextColor(TFT_YELLOW, TFT_BLACK);
-  char buffPassos[30];
-  snprintf(buffPassos, sizeof(buffPassos), "Total: %lu passos", contadorPassos);
-  tft.drawString(buffPassos, 120, 197, 2);
+  char texto[30];
+  snprintf(texto, sizeof(texto), "Total: %lu passos", (unsigned long)passosFinais);
+  tft.drawString(texto, 120, 197, 2);
 }
 
-// -------------------------------------------------------------------
-// INTERFACE GRAFICA ESTATÍSTICA (ADAPTA CORES CONFORME O ESTADO)
-// -------------------------------------------------------------------
 void desenharInterfaceEstatica() {
-  // Fundo Preto (Normal) ou Fundo Verde (Treino Finalizado)
   uint16_t corFundo = treinoFinalizado ? TFT_GREEN : TFT_BLACK;
+  uint16_t corTexto = treinoFinalizado ? TFT_BLACK : TFT_WHITE;
   tft.fillScreen(corFundo);
 
-  // Barra de Título Topo
-  tft.fillRect(0, 0, 240, 32, TFT_NAVY);
-  tft.setTextColor(TFT_WHITE, TFT_NAVY);
+  uint16_t corBarra = (etapaAtiva && etapaAlerta) ? TFT_RED : TFT_NAVY;
+  tft.fillRect(0, 0, 240, 32, corBarra);
+  tft.setTextColor(TFT_WHITE, corBarra);
   tft.setTextDatum(MC_DATUM);
-  tft.drawString("GCP-esteira IoT", 120, 16, 4);
+  if (etapaAtiva) {
+    char titulo[24];
+    snprintf(titulo, sizeof(titulo), "%s %u/%u", etapaNome, etapaIndice, etapaTotal);
+    tft.drawString(titulo, 120, 16, 4);
+  } else {
+    tft.drawString("GCP-esteira IoT", 120, 16, 4);
+  }
 
-  // Moldura de Batimentos (BPM)
   tft.drawRoundRect(5, 38, 230, 92, 5, TFT_RED);
-  tft.setTextColor(treinoFinalizado ? TFT_BLACK : TFT_WHITE, corFundo);
+  tft.setTextColor(corTexto, corFundo);
   tft.setTextDatum(TC_DATUM);
   tft.drawString("BATIMENTOS (BPM)", 120, 46, 2);
 
-  // Moldura do Pedômetro (Verde no normal, Azul no pós-treino)
-  uint16_t corPedometro = treinoFinalizado ? TFT_BLUE : TFT_GREEN;
-  tft.drawRoundRect(5, 136, 230, 96, 5, corPedometro);
-  tft.setTextColor(treinoFinalizado ? TFT_BLACK : TFT_WHITE, corFundo);
-  tft.setTextDatum(TC_DATUM);
-  tft.drawString("PEDOMETRO (PASSOS)", 120, 144, 2);
+  tft.drawRoundRect(5, 136, 230, 96, 5, treinoFinalizado ? TFT_BLUE : TFT_GREEN);
+  tft.setTextColor(corTexto, corFundo);
+  tft.drawString(etapaAtiva ? "VELOCIDADE E TEMPO" : "CADENCIA (SPM)", 120, 144, 2);
 }
 
-// -------------------------------------------------------------------
-// ATUALIZAÇÃO DOS VALORES DINÂMICOS NO DISPLAY
-// -------------------------------------------------------------------
-void atualizarValoresDisplay() {
-  if (treinoConcluido) return; // Não desenha enquanto exibe o aviso de Parabéns
+void atualizarValoresDisplay(uint32_t agora) {
+  if (treinoConcluido) return;
 
   uint16_t corFundo = treinoFinalizado ? TFT_GREEN : TFT_BLACK;
+  bool enlace = enlaceAtivo(agora);
   tft.setTextDatum(MC_DATUM);
 
-  // 1. Atualização do BPM
-  tft.fillRect(10, 62, 220, 60, corFundo);
-  uint32_t bpmAtual = (uint32_t)incomingData.heartBPM;
+  // Indicadores na barra de título: braçadeira (esquerda) e MQTT (direita).
+  tft.fillCircle(10, 16, 5, enlace ? TFT_GREEN : TFT_RED);
+  tft.fillCircle(230, 16, 5, client.connected() ? TFT_GREEN : TFT_RED);
 
-  if (incomingData.irValue < LIMIAR_DEDO_PRESENTE) {
+  // BPM
+  tft.fillRect(10, 62, 220, 60, corFundo);
+  if (!enlace) {
     tft.setTextColor(TFT_DARKGREY, corFundo);
-    tft.drawString("SEM DEDO", 120, 90, 4);
-  } else if (bpmAtual == 0) {
+    tft.drawString("SEM SINAL", 120, 90, 4);
+  } else if (!ultimo.contato) {
+    tft.setTextColor(TFT_DARKGREY, corFundo);
+    tft.drawString("SEM CONTATO", 120, 90, 4);
+  } else if (ultimo.bpm < 1.0f) {
     tft.setTextColor(treinoFinalizado ? TFT_NAVY : TFT_YELLOW, corFundo);
     tft.drawString("ANALISANDO...", 120, 90, 4);
   } else {
+    char texto[10];
+    snprintf(texto, sizeof(texto), "%3u", (unsigned)(ultimo.bpm + 0.5f));
     tft.setTextColor(TFT_RED, corFundo);
-    char buffBPM[10];
-    snprintf(buffBPM, sizeof(buffBPM), "%3u", bpmAtual);
-    tft.drawString(buffBPM, 120, 90, 4);
+    tft.drawString(texto, 120, 90, 4);
   }
 
-  // 2. Atualização dos Passos (Azul se finalizado, Verde se normal)
-  tft.fillRect(10, 160, 220, 65, corFundo);
-  tft.setTextColor(treinoFinalizado ? TFT_BLUE : TFT_GREEN, corFundo);
-  char buffPassos[15];
-  snprintf(buffPassos, sizeof(buffPassos), "%lu", contadorPassos);
-  tft.drawString(buffPassos, 120, 190, 4);
-}
-
-// -------------------------------------------------------------------
-// CALLBACK MQTT (RECEBIMENTO DE COMANDOS RPC DO THINGSBOARD)
-// -------------------------------------------------------------------
-void mqttCallback(char* topic, byte* payload, unsigned int length) {
-  String message;
-  for (unsigned int i = 0; i < length; i++) {
-    message += (char)payload[i];
-  }
-  
-  Serial.print("Comando RPC recebido [Tópico ");
-  Serial.print(topic);
-  Serial.print("]: ");
-  Serial.println(message);
-
-  if (String(topic).startsWith("v1/devices/me/rpc/request/")) {
-    StaticJsonDocument<200> doc;
-    DeserializationError error = deserializeJson(doc, message);
-
-    if (!error) {
-      const char* method = doc["method"];
-      if (method && String(method) == "concluirTreino") {
-        treinoConcluido = true;
-        tempoInicioConcluido = millis();
-        exibirTelaConcluido();
-      }
+  char texto[32];
+  if (etapaAtiva) {
+    // Faixa-alvo e moldura colorida: verde na zona, amarelo abaixo, vermelho acima.
+    bool temBpm = enlace && ultimo.contato && ultimo.bpm >= 1.0f;
+    uint16_t corZona = TFT_DARKGREY;
+    if (temBpm) {
+      corZona = ultimo.bpm < etapaZmin ? TFT_YELLOW : (ultimo.bpm > etapaZmax ? TFT_RED : TFT_GREEN);
     }
-  }
-}
+    tft.drawRoundRect(5, 38, 230, 92, 5, corZona);
+    tft.drawRoundRect(6, 39, 228, 90, 5, corZona);
+    snprintf(texto, sizeof(texto), "alvo %u-%u", etapaZmin, etapaZmax);
+    tft.setTextColor(TFT_WHITE, corFundo);
+    tft.drawString(texto, 120, 113, 2);
 
-// -------------------------------------------------------------------
-// RECONEXÃO MQTT NÃO-BLOQUEANTE
-// -------------------------------------------------------------------
-void reconnectMQTT() {
-  static unsigned long lastReconnectAttempt = 0;
-  
-  // Tenta a cada 5 segundos sem travar a execução do loop ou do ESP-NOW
-  if (millis() - lastReconnectAttempt >= 5000) {
-    lastReconnectAttempt = millis();
-    Serial.print("Tentando reconectar ao ThingsBoard...");
-    // Gera um ClientID único a cada tentativa de conexão para não ser bloqueado pelo broker
-    String clientId = "ESP32_Receiver_" + String(random(0, 0xffff), HEX);
-    if (client.connect("ESP32_Receiver_Node", TB_TOKEN, NULL)) {
-      Serial.println(" Conectado!");
-      client.subscribe("v1/devices/me/rpc/request/+");
-      Serial.println("Inscrito no topico de RPC!");
+    // Velocidade recomendada e tempo restante da etapa.
+    uint32_t restante = (agora < etapaFimMs) ? (etapaFimMs - agora + 999) / 1000 : 0;
+    tft.fillRect(10, 162, 220, 65, corFundo);
+    snprintf(texto, sizeof(texto), "%.1fkm/h %lu:%02lu", etapaVel,
+             (unsigned long)(restante / 60), (unsigned long)(restante % 60));
+    tft.setTextColor(etapaAlerta ? TFT_RED : TFT_GREEN, corFundo);
+    tft.drawString(texto, 120, 182, 4);
+    if (enlace) {
+      snprintf(texto, sizeof(texto), "%u spm  %lu passos", (unsigned)(ultimo.spm + 0.5f),
+               (unsigned long)passosDoTreino());
     } else {
-      Serial.printf(" Falha (rc=%d)\n", client.state());
+      snprintf(texto, sizeof(texto), "-- spm  %lu passos", (unsigned long)passosDoTreino());
     }
+    tft.setTextColor(TFT_WHITE, corFundo);
+    tft.drawString(texto, 120, 213, 2);
+    return;
+  }
+
+  // Cadência e passos
+  tft.fillRect(10, 162, 220, 65, corFundo);
+  tft.setTextColor(treinoFinalizado ? TFT_BLUE : TFT_GREEN, corFundo);
+  if (enlace) {
+    snprintf(texto, sizeof(texto), "%u", (unsigned)(ultimo.spm + 0.5f));
+  } else {
+    snprintf(texto, sizeof(texto), "--");
+  }
+  tft.drawString(texto, 120, 182, 4);
+  snprintf(texto, sizeof(texto), "%lu passos", (unsigned long)passosDoTreino());
+  tft.drawString(texto, 120, 213, 2);
+}
+
+// -------------------------------------------------------------------
+// MQTT / THINGSBOARD
+// -------------------------------------------------------------------
+void mqttCallback(char *topic, byte *payload, unsigned int length) {
+  size_t tamanhoPrefixo = strlen(PREFIXO_RPC_PEDIDO);
+  if (strncmp(topic, PREFIXO_RPC_PEDIDO, tamanhoPrefixo) != 0) return;
+
+  // O buffer do PubSubClient é reutilizado no publish: copia o que precisa antes.
+  char topicoResposta[64];
+  snprintf(topicoResposta, sizeof(topicoResposta), "%s%s", PREFIXO_RPC_RESPOSTA,
+           topic + tamanhoPrefixo);
+
+#if ARDUINOJSON_VERSION_MAJOR >= 7
+  JsonDocument doc;
+#else
+  StaticJsonDocument<256> doc;
+#endif
+  if (deserializeJson(doc, payload, length)) {
+    Serial.println("[RPC] JSON invalido");
+    return;
+  }
+  const char *metodo = doc["method"] | "";
+  Serial.printf("[RPC] metodo: %s\n", metodo);
+
+  bool reconhecido = true;
+  if (strcmp(metodo, "definirEtapa") == 0) {
+    // Enviado pelo serviço guia/ a cada troca de etapa.
+    JsonVariant p = doc["params"];
+    strlcpy(etapaNome, p["nome"] | "ETAPA", sizeof(etapaNome));
+    etapaVel    = p["vel"] | 0.0f;
+    etapaFimMs  = millis() + (uint32_t)(p["dur"] | 0) * 1000UL;
+    etapaZmin   = p["zmin"] | 0;
+    etapaZmax   = p["zmax"] | 0;
+    etapaIndice = p["i"] | 0;
+    etapaTotal  = p["n"] | 0;
+    etapaAlerta = p["alerta"] | false;
+    if (!etapaAtiva || etapaIndice <= 1) {
+      passosBase = temPacote ? ultimo.passos : 0; // primeira etapa: zera a contagem
+    }
+    etapaAtiva = true;
+    treinoConcluido = false;
+    treinoFinalizado = false;
+    desenharInterfaceEstatica();
+  } else if (strcmp(metodo, "concluirTreino") == 0 || strcmp(metodo, "encerrarTreino") == 0) {
+    passosFinais = passosDoTreino();
+    etapaAtiva = false;
+    treinoConcluido = true;
+    treinoFinalizado = false;
+    tempoInicioConcluido = millis();
+    exibirTelaConcluido();
+  } else if (strcmp(metodo, "reiniciarTreino") == 0) {
+    etapaAtiva = false;
+    treinoConcluido = false;
+    treinoFinalizado = false;
+    passosBase = temPacote ? ultimo.passos : 0;
+    desenharInterfaceEstatica();
+  } else {
+    reconhecido = false;
+  }
+  client.publish(topicoResposta, reconhecido ? "{\"ok\":true}" : "{\"ok\":false}");
+}
+
+void reconectaMQTT(uint32_t agora) {
+  static uint32_t ultimaTentativa = 0;
+  if (ultimaTentativa != 0 && (agora - ultimaTentativa) < INTERVALO_MQTT_MS) return;
+  ultimaTentativa = agora;
+
+  // ClientID derivado do MAC: fixo para esta placa e diferente entre placas.
+  String clientId = "gcp-painel-" + macDesta();
+  clientId.replace(":", "");
+  Serial.printf("[MQTT] Conectando a %s:%d ... ", TB_SERVER, TB_PORT);
+  if (client.connect(clientId.c_str(), TB_TOKEN, NULL)) {
+    client.subscribe(TOPICO_RPC_PEDIDOS);
+    Serial.println("conectado");
+  } else {
+    Serial.printf("falha (rc=%d)\n", client.state());
+  }
+}
+
+float arredonda1(float valor) {
+  return roundf(valor * 10.0f) / 10.0f;
+}
+
+void publicaTelemetria(uint32_t agora) {
+#if ARDUINOJSON_VERSION_MAJOR >= 7
+  JsonDocument doc;
+#else
+  StaticJsonDocument<512> doc;
+#endif
+  bool enlace = enlaceAtivo(agora);
+  uint32_t esperados = pacotesRx + pacotesPerdidos;
+
+  doc["enlace"] = enlace;
+  if (enlace) {
+    // Sem enlace não publica valores de sensor, para não repetir leitura velha.
+    doc["bpm"]     = arredonda1(ultimo.bpm);
+    doc["spm"]     = arredonda1(ultimo.spm);
+    doc["ir"]      = ultimo.irValue;
+    doc["contato"] = ultimo.contato != 0;
+    doc["rssi"]    = ultimoRssi;
+    if (ultimo.latencia_us != LATENCIA_INVALIDA) {
+      doc["latencia_ms"] = roundf(ultimo.latencia_us / 10.0f) / 100.0f;
+    }
+    doc["falhas_envio"] = ultimo.falhas_envio;
+  }
+  doc["passos"]           = passosDoTreino();
+  doc["pacotes_rx"]       = pacotesRx;
+  doc["pacotes_perdidos"] = pacotesPerdidos;
+  doc["perda_pct"]        = esperados ? arredonda1(100.0f * pacotesPerdidos / esperados) : 0.0f;
+  doc["concluido"]        = (treinoConcluido || treinoFinalizado);
+  if (etapaAtiva) {
+    doc["etapa"]    = etapaIndice;
+    doc["vel_alvo"] = etapaVel;
+  }
+
+  char payload[512];
+  size_t tamanho = serializeJson(doc, payload, sizeof(payload));
+  bool ok = client.publish(TOPICO_TELEMETRIA, (const uint8_t *)payload, tamanho);
+  if (ok) publicacoesOk++; else publicacoesFalha++;
+
+  Serial.printf("CSV,M,%lu,%u,%d,%lu,%lu\n", (unsigned long)agora, ok ? 1 : 0,
+                (int)WiFi.RSSI(), (unsigned long)publicacoesOk, (unsigned long)publicacoesFalha);
+}
+
+// -------------------------------------------------------------------
+// WI-FI SEM BLOQUEIO
+// -------------------------------------------------------------------
+// Enquanto procura a rede, o rádio varre os canais e o ESP-NOW perde pacotes.
+// Por isso cada tentativa é limitada e, se falhar, há uma pausa longa em que
+// o painel funciona só com a braçadeira.
+void iniciaTentativaWiFi(uint32_t agora) {
+  WiFi.disconnect();
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  estadoRede = REDE_TENTANDO;
+  tEstadoRede = agora;
+  Serial.printf("[WiFi] Conectando a \"%s\" ...\n", WIFI_SSID);
+}
+
+void gerenciaWiFi(uint32_t agora) {
+  bool conectado = (WiFi.status() == WL_CONNECTED);
+  switch (estadoRede) {
+    case REDE_TENTANDO:
+      if (conectado) {
+        estadoRede = REDE_CONECTADA;
+        Serial.printf("[WiFi] Conectado. IP %s, canal %d\n",
+                      WiFi.localIP().toString().c_str(), (int)WiFi.channel());
+      } else if ((agora - tEstadoRede) >= TEMPO_TENTATIVA_WIFI_MS) {
+        WiFi.disconnect();
+        estadoRede = REDE_ESPERA;
+        tEstadoRede = agora;
+        Serial.println("[WiFi] Sem rede. Operando so com ESP-NOW; nova tentativa em 60 s.");
+      }
+      break;
+    case REDE_CONECTADA:
+      if (!conectado) {
+        Serial.println("[WiFi] Conexao perdida.");
+        iniciaTentativaWiFi(agora);
+      }
+      break;
+    case REDE_ESPERA:
+      if ((agora - tEstadoRede) >= ESPERA_WIFI_MS) iniciaTentativaWiFi(agora);
+      break;
   }
 }
 
 // -------------------------------------------------------------------
-// SETUP PRINCIPAL
+// SETUP
 // -------------------------------------------------------------------
 void setup() {
   Serial.begin(115200);
+  delay(200);
+  Serial.println("\n=== GCP-Esteira | Painel (receptora) V1 ===");
 
-  // Backlight (GPIO 4)
-  pinMode(4, OUTPUT);
-  digitalWrite(4, HIGH);
+  pinMode(PINO_BACKLIGHT, OUTPUT);
+  digitalWrite(PINO_BACKLIGHT, HIGH);
 
-  // Inicialização do Display TFT
   tft.init();
   tft.setRotation(2);
   tft.invertDisplay(true);
-
   desenharInterfaceEstatica();
 
-  // Wi-Fi
-  WiFi.mode(WIFI_AP_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
-  Serial.print("Conectando ao Wi-Fi...");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println("\nWi-Fi Conectado!");
+  filaPacotes = xQueueCreate(32, sizeof(Recebido));
 
-  // ESP-NOW
+  WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(false); // a reconexão é feita por gerenciaWiFi()
+  WiFi.setSleep(false);         // com economia de energia o ESP-NOW perde pacotes
+  Serial.print("MAC desta placa (receptora): ");
+  Serial.println(macDesta());
+  Serial.println("  -> confira com MAC_RECEPTORA em emissora.ino");
+
   if (esp_now_init() != ESP_OK) {
-    Serial.println("Erro ao inicializar ESP-NOW");
-    return;
+    Serial.println("[ERRO] Falha ao iniciar o ESP-NOW");
+  } else {
+    esp_now_register_recv_cb(cbRecebimentoEspNow);
+    Serial.println("[OK] ESP-NOW pronto");
   }
-  esp_now_register_recv_cb(OnDataRecv);
 
-  // Configuração MQTT
   client.setServer(TB_SERVER, TB_PORT);
   client.setCallback(mqttCallback);
+  client.setBufferSize(768);
+
+  Serial.println("CSVH,R,t_rx_ms,seq,t_tx_ms,dt_chegada_ms,rssi,perdidos,bpm,spm,passos,ir,"
+                 "contato,lat_us,falhas_envio,ax,ay,az");
+  Serial.println("CSVH,M,t_ms,ok,wifi_rssi,pub_ok,pub_falha");
+
+  iniciaTentativaWiFi(millis());
 }
 
 // -------------------------------------------------------------------
-// LOOP PRINCIPAL
+// LOOP
 // -------------------------------------------------------------------
 void loop() {
-  // 1. Gerenciamento MQTT Não-Bloqueante
-  if (!client.connected()) {
-    reconnectMQTT();
-  } else {
-    client.loop();
-  }
+  static uint32_t ultimoDisplay = 0;
+  static uint32_t ultimoMqtt = 0;
+  uint32_t agora = millis();
 
-  // 2. Transição de tela: 5s após a conclusão, altera para o layout de fundo verde e passos azuis
-  if (treinoConcluido && (millis() - tempoInicioConcluido >= DURACAO_TELA_CONCLUIDO)) {
-    treinoConcluido = false;
-    treinoFinalizado = true;     
-    desenharInterfaceEstatica(); 
-  }
+  processaFila();
+  gerenciaWiFi(agora);
 
-  // 3. Atualização periódica do Display (4 Hz / a cada 250 ms)
-  if (!treinoConcluido && millis() - lastDisplayUpdate >= 250) {
-    lastDisplayUpdate = millis();
-    atualizarValoresDisplay();
-  }
-
-  // 4. Envio de telemetria para o ThingsBoard a cada 1 segundo (se conectado)
-  if (millis() - lastMqttSend >= 1000) {
-    lastMqttSend = millis();
-
-    if (client.connected()) {
-      StaticJsonDocument<128> doc;
-      doc["bpm"] = incomingData.heartBPM;
-      doc["passos"] = contadorPassos;
-      doc["concluido"] = (treinoConcluido || treinoFinalizado);
-
-      char payloadBuffer[128];
-      serializeJson(doc, payloadBuffer);
-
-      // Imprime o payload JSON completo e bruto no Monitor Serial
-      Serial.print("[MQTT Payload Sent]: ");
-      Serial.println(payloadBuffer);
-
-      bool publicado = client.publish("v1/devices/me/telemetry", payloadBuffer);
-      if (publicado) {
-        Serial.println(" -> Status: Publicado com SUCESSO!");
-      } else {
-        Serial.println(" -> Status: FALHA na publicacao!");
-      }
+  if (estadoRede == REDE_CONECTADA) {
+    if (!client.connected()) {
+      reconectaMQTT(agora);
+    } else {
+      client.loop();
     }
   }
+
+  // 5 s depois de concluir, troca para o layout pós-treino.
+  if (treinoConcluido && (agora - tempoInicioConcluido) >= DURACAO_TELA_CONCLUIDO) {
+    treinoConcluido = false;
+    treinoFinalizado = true;
+    desenharInterfaceEstatica();
+  }
+
+  if (!treinoConcluido && (agora - ultimoDisplay) >= PERIODO_DISPLAY_MS) {
+    ultimoDisplay = agora;
+    atualizarValoresDisplay(agora);
+  }
+
+  if ((agora - ultimoMqtt) >= PERIODO_MQTT_MS) {
+    ultimoMqtt = agora;
+    if (client.connected()) publicaTelemetria(agora);
+  }
+
+  delay(1);
 }

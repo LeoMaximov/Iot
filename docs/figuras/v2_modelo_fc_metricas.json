@@ -1,0 +1,23 @@
+{
+  "linhas": 20098,
+  "testes": 992,
+  "pessoas": 857,
+  "metricas": [
+    {
+      "modelo": "mediana por velocidade",
+      "mae": 12.380323912827148,
+      "r2": 0.7197562525491579
+    },
+    {
+      "modelo": "regressão linear",
+      "mae": 12.55311771810337,
+      "r2": 0.7065299169056486
+    },
+    {
+      "modelo": "gradient boosting monotônico",
+      "mae": 11.976769488222903,
+      "r2": 0.7275124817408394
+    }
+  ],
+  "escolhido": "gradient boosting monotônico"
+}
