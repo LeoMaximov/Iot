@@ -1,0 +1,32 @@
+t,tipo,texto,decisao
+0.0,etapa,"AQUECER 1/14: 7.0 km/h por 36 s, alvo 140-153 BPM",
+20.0,aviso,Cadência indica parado; a etapa pede trote,
+36.0,decisao,AQUECER: BPM sem leitura suficiente (0 de 19); plano mantido,manter_sem_dados
+36.0,etapa,"TIRO 2/14: 9.5 km/h por 12 s, alvo 166-180 BPM",
+48.0,decisao,"TIRO: mediana 60 BPM abaixo da zona, mas a etapa de 12 s é curta para a FC responder; plano mantido",manter_etapa_curta
+48.0,etapa,"RECUPERAR 3/14: 7.0 km/h por 18 s, alvo 140-153 BPM",
+66.0,decisao,"RECUPERAR: mediana 70 BPM abaixo da zona, mas a etapa de 18 s é curta para a FC responder; plano mantido",manter_etapa_curta
+66.0,etapa,"TIRO 4/14: 9.5 km/h por 12 s, alvo 166-180 BPM",
+78.0,decisao,"TIRO: mediana 71 BPM incompatível com cadência de 158 SPM; leitura suspeita, plano mantido",manter_bpm_suspeito
+78.0,etapa,"RECUPERAR 5/14: 7.0 km/h por 18 s, alvo 140-153 BPM",
+96.0,decisao,"RECUPERAR: mediana 120 BPM abaixo da zona, mas a etapa de 18 s é curta para a FC responder; plano mantido",manter_etapa_curta
+96.0,etapa,"TIRO 6/14: 9.5 km/h por 12 s, alvo 166-180 BPM",
+108.0,decisao,"TIRO: mediana 91 BPM abaixo da zona, mas a etapa de 12 s é curta para a FC responder; plano mantido",manter_etapa_curta
+108.0,etapa,"RECUPERAR 7/14: 7.0 km/h por 18 s, alvo 140-153 BPM",
+126.0,decisao,"RECUPERAR: mediana 124 BPM abaixo da zona, mas a etapa de 18 s é curta para a FC responder; plano mantido",manter_etapa_curta
+126.0,etapa,"TIRO 8/14: 9.5 km/h por 12 s, alvo 166-180 BPM",
+138.0,decisao,TIRO: BPM sem leitura suficiente (1 de 7); plano mantido,manter_sem_dados
+138.0,etapa,"RECUPERAR 9/14: 7.0 km/h por 18 s, alvo 140-153 BPM",
+156.0,decisao,RECUPERAR: BPM sem leitura suficiente (3 de 10); plano mantido,manter_sem_dados
+156.0,etapa,"TIRO 10/14: 9.5 km/h por 12 s, alvo 166-180 BPM",
+168.0,decisao,TIRO: BPM sem leitura suficiente (2 de 7); plano mantido,manter_sem_dados
+168.0,etapa,"RECUPERAR 11/14: 7.0 km/h por 18 s, alvo 140-153 BPM",
+186.0,decisao,RECUPERAR: BPM sem leitura suficiente (0 de 10); plano mantido,manter_sem_dados
+186.0,etapa,"TIRO 12/14: 9.5 km/h por 12 s, alvo 166-180 BPM",
+198.0,decisao,TIRO: BPM sem leitura suficiente (0 de 7); plano mantido,manter_sem_dados
+198.0,etapa,"RECUPERAR 13/14: 7.0 km/h por 18 s, alvo 140-153 BPM",
+216.0,decisao,RECUPERAR: BPM sem leitura suficiente (0 de 10); plano mantido,manter_sem_dados
+216.0,etapa,"DESAQUECER 14/14: 6.0 km/h por 36 s, alvo 127-140 BPM",
+236.0,aviso,Cadência indica parado; a etapa pede caminhada,
+252.0,decisao,"DESAQUECER: mediana 57 BPM abaixo da zona, mas a etapa de 36 s é curta para a FC responder; plano mantido",manter_etapa_curta
+252.0,fim,Treino concluído,

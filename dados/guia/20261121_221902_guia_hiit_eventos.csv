@@ -1,0 +1,11 @@
+t,tipo,texto,decisao
+0.0,etapa,"AQUECER 1/14: 7.0 km/h por 36 s, alvo 140-153 BPM",
+20.0,aviso,Cadência indica parado; a etapa pede trote,
+36.0,decisao,"AQUECER: mediana 58 BPM abaixo da zona, mas a etapa de 36 s é curta para a FC responder; plano mantido",manter_etapa_curta
+36.0,etapa,"TIRO 2/14: 9.5 km/h por 12 s, alvo 166-180 BPM",
+48.0,decisao,"TIRO: mediana 60 BPM abaixo da zona, mas a etapa de 12 s é curta para a FC responder; plano mantido",manter_etapa_curta
+48.0,etapa,"RECUPERAR 3/14: 7.0 km/h por 18 s, alvo 140-153 BPM",
+66.0,decisao,"RECUPERAR: mediana 54 BPM abaixo da zona, mas a etapa de 18 s é curta para a FC responder; plano mantido",manter_etapa_curta
+66.0,etapa,"TIRO 4/14: 9.5 km/h por 12 s, alvo 166-180 BPM",
+78.0,decisao,"TIRO: mediana 57 BPM abaixo da zona, mas a etapa de 12 s é curta para a FC responder; plano mantido",manter_etapa_curta
+78.0,etapa,"RECUPERAR 5/14: 7.0 km/h por 18 s, alvo 140-153 BPM",
