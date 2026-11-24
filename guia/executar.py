@@ -27,28 +27,35 @@ RAIZ = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RAIZ / "tools"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from nucleo import TREINOS, Condutor, ModeloFC, Perfil, atividade_por_spm, gerar_plano  # noqa: E402
+from nucleo import LIMITE_SEGURANCA, TREINOS, Condutor, ModeloFC, Perfil, atividade_por_spm, gerar_plano  # noqa: E402
 from nucleo import _hiit as nucleo_hiit  # noqa: E402
+from tb_comum import URL_PADRAO, USUARIO_PADRAO, SENHA_PADRAO, DISPOSITIVO_PADRAO  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
 # Registro da sessão
 # ---------------------------------------------------------------------------
 class Registro:
-    def __init__(self):
+    def __init__(self, relogio=None):
         self.linhas, self.eventos = [], []
+        # Ao vivo, relogio = time.time: cada linha ganha ts_ms (horário absoluto),
+        # que alinha a sessão com a serial e com o ThingsBoard no tratamento.
+        self.relogio = relogio
+
+    def _carimbo(self):
+        return {"ts_ms": int(self.relogio() * 1000)} if self.relogio else {}
 
     def amostra(self, t, bpm, spm, condutor):
         e = condutor.etapa
         self.linhas.append({
-            "t": round(t, 1), "bpm": round(bpm, 1), "spm": round(spm, 1),
+            "t": round(t, 1), **self._carimbo(), "bpm": round(bpm, 1), "spm": round(spm, 1),
             "etapa": condutor.indice + 1, "nome": e.nome, "zona": e.zona, "vel": e.vel,
             "bpm_min": round(e.bpm_min, 1), "bpm_max": round(e.bpm_max, 1),
             "situacao": condutor.situacao_zona(bpm), "atividade": atividade_por_spm(spm),
         })
 
     def evento(self, ev, eco=True):
-        self.eventos.append({"t": round(ev.t, 1), "tipo": ev.tipo, "texto": ev.texto,
+        self.eventos.append({"t": round(ev.t, 1), **self._carimbo(), "tipo": ev.tipo, "texto": ev.texto,
                              "decisao": ev.dados.get("decisao", "")})
         if eco:
             print(f"[{ev.t:6.0f} s] {ev.tipo.upper():8s} {ev.texto}")
@@ -254,7 +261,9 @@ def modo_ao_vivo(args, perfil, modelo):
         rpc("definirEtapa", {"nome": e.nome, "vel": e.vel, "dur": e.duracao,
                              "zmin": round(e.bpm_min), "zmax": round(e.bpm_max),
                              "i": condutor.indice + 1, "n": len(condutor.plano),
-                             "alerta": e.nome == "ALERTA"})
+                             "alerta": e.nome == "ALERTA",
+                             # limite do alerta local no painel (A6): 95% da FC máx.
+                             "limite_alerta": round(LIMITE_SEGURANCA * condutor.perfil.fc_max)})
 
     def fonte(_t, condutor):
         resposta = tb.get(f"/api/plugins/telemetry/DEVICE/{dispositivo}/values/timeseries",
@@ -277,7 +286,7 @@ def modo_ao_vivo(args, perfil, modelo):
                     "guia_situacao": condutor.situacao_zona(bpm)})
         return bpm, spm
 
-    condutor, registro = Condutor(perfil, args.treino, modelo, args.escala), Registro()
+    condutor, registro = Condutor(perfil, args.treino, modelo, args.escala), Registro(time.time)
     evento_original = registro.evento
 
     def evento_com_telemetria(ev, eco=True):
@@ -316,20 +325,23 @@ def main():
     ap.add_argument("--saida", default="dados/guia")
     ap.add_argument("--calibracao", metavar="VEL:BPM",
                     help="FC estável medida no usuário em uma velocidade, ex.: 6:118")
+    ap.add_argument("--modelo", help="arquivo .joblib do modelo (padrão: guia/modelo_fc.joblib)")
     ap.add_argument("--semente", type=int, default=1)
     ap.add_argument("--resposta", type=float, default=1.0,
                     help="simular: ganho da FC do usuário simulado (1.3 = menos condicionado)")
-    ap.add_argument("--url", default="http://localhost:8080")
-    ap.add_argument("--usuario", default="tenant@thingsboard.org")
-    ap.add_argument("--senha", default="tenant")
-    ap.add_argument("--dispositivo", default="GCP-Esteira Painel")
+    ap.add_argument("--url", default=URL_PADRAO, help="padrão: variável TB_URL")
+    ap.add_argument("--usuario", default=USUARIO_PADRAO, help="padrão: variável TB_USUARIO")
+    ap.add_argument("--senha", default=SENHA_PADRAO, help="padrão: variável TB_SENHA")
+    ap.add_argument("--dispositivo", default=DISPOSITIVO_PADRAO)
     args = ap.parse_args()
     sys.stdout.reconfigure(errors="replace")
 
     if args.tiros:
         TREINOS["hiit"] = nucleo_hiit(args.tiros)
     perfil = Perfil(args.idade, args.fc_repouso, args.sexo, args.peso, args.altura, args.vel_max)
-    modelo = ModeloFC()
+    modelo = ModeloFC(args.modelo) if args.modelo else ModeloFC()
+    if args.modelo and not modelo.treinado:
+        sys.exit(f"Modelo não encontrado: {args.modelo}")
     if args.calibracao:
         vel, bpm = (float(x) for x in args.calibracao.split(":"))
         modelo.calibrar(perfil, vel, bpm)

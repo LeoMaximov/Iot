@@ -62,6 +62,8 @@ def main():
     ap.add_argument("--nota", default="", help="observação livre sobre o teste")
     ap.add_argument("--sem-reset", action="store_true",
                     help="não reinicia a placa ao abrir a porta")
+    ap.add_argument("--parar-se-existir", metavar="ARQUIVO",
+                    help="encerra a gravação quando este arquivo aparecer (usado por coletar_sessao.py)")
     args = ap.parse_args()
 
     # O boot do ESP32 imprime bytes que o console do Windows não sabe exibir;
@@ -92,19 +94,22 @@ def main():
     meta = {
         "teste": args.teste,
         "inicio": inicio.isoformat(timespec="seconds"),
+        # Relógio absoluto do PC no instante t_pc = 0; alinha a serial com o guia e o ThingsBoard.
+        "inicio_epoch_ms": None,
         "porta": args.porta,
         "ref_bpm": args.ref_bpm,
         "ref_spm": args.ref_spm,
         "nota": args.nota,
         "simulado": False,
     }
-    Path(f"{base}_meta.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False),
-                                         encoding="utf-8")
-
     cabecalhos = {k: list(v) for k, v in CABECALHOS.items()}
     arquivos, escritores, contagem = {}, {}, {}
     log = open(f"{base}.log", "w", encoding="utf-8")
     t0 = time.monotonic()
+    meta["inicio_epoch_ms"] = int(time.time() * 1000)
+    Path(f"{base}_meta.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False),
+                                         encoding="utf-8")
+    parar = Path(args.parar_se_existir) if args.parar_se_existir else None
     proximo_resumo = t0 + 5
     print(f"Gravando em {base}_<tipo>.csv  (Ctrl+C para encerrar)")
 
@@ -112,6 +117,8 @@ def main():
         while True:
             agora = time.monotonic()
             if args.duracao and (agora - t0) >= args.duracao:
+                break
+            if parar is not None and parar.exists():
                 break
             bruto = porta.readline()
             if not bruto:

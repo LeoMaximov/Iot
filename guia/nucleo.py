@@ -77,6 +77,11 @@ TREINOS = {
     "progressivo": [("AQUECER", 1, 180), ("LEVE", 2, 300), ("MODERADO", 3, 300),
                     ("FORTE", 4, 180), ("DESAQUECER", 1, 180)],
     "recuperacao": [("LEVE", 1, 900)],
+    # Primeiro teste real na esteira (tools/teste_esteira.py): sobe até a zona 3 e
+    # volta, sem zona 4. Todas as etapas de esforço têm 4 min, para a FC chegar ao
+    # regime e virar linha de treino; a 2ª LEVE mostra a FC na descida.
+    "validacao": [("AQUECER", 1, 180), ("LEVE", 2, 240), ("MODERADO", 3, 240),
+                  ("LEVE", 2, 180), ("DESAQUECER", 1, 180)],
 }
 
 
@@ -100,7 +105,10 @@ class ModeloFC:
         # treinadas, em que a FC ainda não estabilizou em cada velocidade; o modelo
         # tende a prever FC baixa demais (velocidade alta demais) para um usuário
         # comum. Sem calibração, o guia parte da margem e sobe se a FC permitir.
-        self.deslocamento = MARGEM_INICIAL if self.pacote is not None else 0.0
+        # Um modelo treinado com dados reais em regime traz a própria margem, medida
+        # fora da amostra (treinar_modelo.py --modo combinado/reais).
+        self.deslocamento = (self.pacote.get("margem_inicial", MARGEM_INICIAL)
+                             if self.pacote is not None else 0.0)
 
     @property
     def treinado(self):
@@ -141,6 +149,20 @@ class ModeloFC:
         # leitura baixa pode ser erro do sensor ou FC que ainda não subiu.
         passo = max(-5.0, 0.5 * erro)
         self.deslocamento = max(-30.0, min(30.0, self.deslocamento + passo))
+
+
+class ModeloCorrigido:
+    """Modelo do dataset público somado a uma correção ajustada nas coletas próprias.
+
+    correção(vel) = intercepto + inclinacao * vel. Fica aqui (e não em
+    treinar_modelo.py) para o joblib conseguir carregá-lo dentro do guia.
+    """
+
+    def __init__(self, base, intercepto, inclinacao=0.0):
+        self.base, self.intercepto, self.inclinacao = base, intercepto, inclinacao
+
+    def predict(self, X):
+        return self.base.predict(X) + self.intercepto + self.inclinacao * X["vel"].to_numpy()
 
 
 def gerar_plano(perfil, treino, modelo, escala=1.0):
