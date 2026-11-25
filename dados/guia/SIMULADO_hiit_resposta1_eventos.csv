@@ -1,10 +1,10 @@
 t,tipo,texto,decisao
-0.0,etapa,"AQUECER 1/14: 7.5 km/h por 180 s, alvo 140-153 BPM",
-180.0,decisao,"AQUECER: mediana 150 BPM, dentro da zona: mantém",manter
-180.0,etapa,"TIRO 2/14: 10.5 km/h por 60 s, alvo 166-180 BPM",
-240.0,decisao,"TIRO: mediana 178 BPM, dentro da zona: mantém",manter
+0.0,etapa,"AQUECER 1/14: 7.0 km/h por 180 s, alvo 140-153 BPM",
+180.0,decisao,"AQUECER: mediana 145 BPM, dentro da zona: mantém",manter
+180.0,etapa,"TIRO 2/14: 9.5 km/h por 60 s, alvo 166-180 BPM",
+240.0,decisao,"TIRO: mediana 169 BPM, dentro da zona: mantém",manter
 240.0,etapa,"RECUPERAR 3/14: 7.0 km/h por 90 s, alvo 140-153 BPM",
-330.0,decisao,"RECUPERAR: mediana 153 BPM, dentro da zona: mantém",manter
+330.0,decisao,"RECUPERAR: mediana 151 BPM, dentro da zona: mantém",manter
 330.0,etapa,"TIRO 4/14: 9.5 km/h por 60 s, alvo 166-180 BPM",
 390.0,decisao,"TIRO: mediana 169 BPM, dentro da zona: mantém",manter
 390.0,etapa,"RECUPERAR 5/14: 7.0 km/h por 90 s, alvo 140-153 BPM",
@@ -25,6 +25,6 @@ t,tipo,texto,decisao
 990.0,decisao,"TIRO: mediana 169 BPM, dentro da zona: mantém",manter
 990.0,etapa,"RECUPERAR 13/14: 7.0 km/h por 90 s, alvo 140-153 BPM",
 1080.0,decisao,"RECUPERAR: mediana 151 BPM, dentro da zona: mantém",manter
-1080.0,etapa,"DESAQUECER 14/14: 5.5 km/h por 180 s, alvo 127-140 BPM",
-1260.0,decisao,"DESAQUECER: mediana 130 BPM, dentro da zona: mantém",manter
+1080.0,etapa,"DESAQUECER 14/14: 6.0 km/h por 180 s, alvo 127-140 BPM",
+1260.0,decisao,"DESAQUECER: mediana 135 BPM, dentro da zona: mantém",manter
 1260.0,fim,Treino concluído,

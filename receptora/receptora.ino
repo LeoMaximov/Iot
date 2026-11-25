@@ -84,6 +84,62 @@ uint16_t etapaZmin = 0, etapaZmax = 0; // faixa de BPM da zona-alvo
 uint8_t  etapaIndice = 0, etapaTotal = 0;
 bool     etapaAlerta = false;   // etapa de segurança: barra de título vermelha
 
+// -------------------------------------------------------------------
+// ALERTA LOCAL DE SEGURANÇA (A6)
+// -------------------------------------------------------------------
+// Exceção deliberada ao "sem processamento local": a comparação com o limite
+// de segurança roda no painel, para o alerta funcionar mesmo sem internet.
+// Não decide o treino: só sinaliza. O limite (95% da FC máx.) vem do guia no
+// RPC definirEtapa ("limite_alerta"); 0 desliga o alerta.
+const uint8_t  TAM_AMOSTRAS_BPM    = 64;
+const uint8_t  MIN_AMOSTRAS_ALERTA = 5;
+const uint32_t JANELA_ALERTA_MS    = 10000;  // mediana dos últimos 10 s, como no guia
+struct AmostraBpm { uint32_t tMs; float bpm; };
+AmostraBpm amostrasBpm[TAM_AMOSTRAS_BPM];
+uint8_t  posAmostra = 0;
+uint8_t  nAmostras = 0;
+float    ultimoBpmRegistrado = -1.0f;
+uint16_t limiteAlertaBpm = 0;
+bool     alertaLocal = false;
+float    medianaAlertaLocal = 0.0f;
+
+// Guarda uma leitura de BPM. O BPM muda devagar, então só registra quando o valor muda.
+void registraAmostraBpm(uint32_t tMs, float bpm) {
+  if (bpm == ultimoBpmRegistrado) return;
+  ultimoBpmRegistrado = bpm;
+  amostrasBpm[posAmostra] = {tMs, bpm};
+  posAmostra = (posAmostra + 1) % TAM_AMOSTRAS_BPM;
+  if (nAmostras < TAM_AMOSTRAS_BPM) nAmostras++;
+}
+
+// Calcula a mediana das amostras da janela e liga/desliga o alerta.
+void atualizaAlertaLocal(uint32_t agora) {
+  float valores[TAM_AMOSTRAS_BPM];
+  uint8_t n = 0;
+  for (uint8_t i = 0; i < nAmostras; i++) {
+    if ((agora - amostrasBpm[i].tMs) <= JANELA_ALERTA_MS) valores[n++] = amostrasBpm[i].bpm;
+  }
+
+  bool novo = false;
+  if (limiteAlertaBpm > 0 && n >= MIN_AMOSTRAS_ALERTA) {
+    // Ordenação por inserção: n é pequeno (no máximo 64).
+    for (uint8_t i = 1; i < n; i++) {
+      float v = valores[i];
+      int j = (int)i - 1;
+      while (j >= 0 && valores[j] > v) { valores[j + 1] = valores[j]; j--; }
+      valores[j + 1] = v;
+    }
+    medianaAlertaLocal = (n % 2) ? valores[n / 2] : (valores[n / 2 - 1] + valores[n / 2]) / 2.0f;
+    novo = medianaAlertaLocal > limiteAlertaBpm;
+  }
+
+  if (novo != alertaLocal) {
+    alertaLocal = novo;
+    Serial.printf("[ALERTA] %s: mediana %.0f BPM, limite %u\n",
+                  novo ? "ATIVO" : "encerrado", medianaAlertaLocal, (unsigned)limiteAlertaBpm);
+  }
+}
+
 // Rede
 enum EstadoRede { REDE_TENTANDO, REDE_CONECTADA, REDE_ESPERA };
 EstadoRede estadoRede = REDE_TENTANDO;
@@ -134,6 +190,7 @@ void processaFila() {
     ultimoRxMs = r.tRxMs;
     ultimoRssi = r.rssi;
     temPacote = true;
+    if (r.pacote.contato && r.pacote.bpm >= 1.0f) registraAmostraBpm(r.tRxMs, r.pacote.bpm);
 
     Serial.printf("CSV,R,%lu,%lu,%lu,%lu,%d,%lu,%.1f,%.1f,%lu,%ld,%u,%ld,%lu,%.3f,%.3f,%.3f\n",
                   (unsigned long)r.tRxMs, (unsigned long)r.pacote.seq,
@@ -205,6 +262,20 @@ void atualizarValoresDisplay(uint32_t agora) {
   // Indicadores na barra de título: braçadeira (esquerda) e MQTT (direita).
   tft.fillCircle(10, 16, 5, enlace ? TFT_GREEN : TFT_RED);
   tft.fillCircle(230, 16, 5, client.connected() ? TFT_GREEN : TFT_RED);
+
+  // Rótulo do BPM; pisca em vermelho enquanto o alerta local estiver ativo.
+  uint16_t corTextoRotulo = treinoFinalizado ? TFT_BLACK : TFT_WHITE;
+  tft.fillRect(10, 40, 220, 18, corFundo);
+  tft.setTextDatum(TC_DATUM);
+  if (alertaLocal && ((agora / 500) % 2 == 0)) {
+    tft.fillRect(10, 40, 220, 18, TFT_RED);
+    tft.setTextColor(TFT_WHITE, TFT_RED);
+    tft.drawString("FC ALTA: REDUZA O RITMO", 120, 46, 2);
+  } else {
+    tft.setTextColor(corTextoRotulo, corFundo);
+    tft.drawString("BATIMENTOS (BPM)", 120, 46, 2);
+  }
+  tft.setTextDatum(MC_DATUM);
 
   // BPM
   tft.fillRect(10, 62, 220, 60, corFundo);
@@ -305,6 +376,7 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
     etapaIndice = p["i"] | 0;
     etapaTotal  = p["n"] | 0;
     etapaAlerta = p["alerta"] | false;
+    limiteAlertaBpm = p["limite_alerta"] | 0;
     if (!etapaAtiva || etapaIndice <= 1) {
       passosBase = temPacote ? ultimo.passos : 0; // primeira etapa: zera a contagem
     }
@@ -379,6 +451,7 @@ void publicaTelemetria(uint32_t agora) {
   doc["pacotes_perdidos"] = pacotesPerdidos;
   doc["perda_pct"]        = esperados ? arredonda1(100.0f * pacotesPerdidos / esperados) : 0.0f;
   doc["concluido"]        = (treinoConcluido || treinoFinalizado);
+  doc["alerta_local"]     = alertaLocal;
   if (etapaAtiva) {
     doc["etapa"]    = etapaIndice;
     doc["vel_alvo"] = etapaVel;
@@ -502,6 +575,8 @@ void loop() {
     treinoFinalizado = true;
     desenharInterfaceEstatica();
   }
+
+  atualizaAlertaLocal(agora);
 
   if (!treinoConcluido && (agora - ultimoDisplay) >= PERIODO_DISPLAY_MS) {
     ultimoDisplay = agora;

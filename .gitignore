@@ -14,5 +14,8 @@ __pycache__/
 # Dados simulados (só para testar os scripts; nunca entram no relatório)
 dados/simulados/
 
+# Coletas com voluntários: dados de saúde, ficam só nas máquinas da equipe
+dados/reais/
+
 # Datasets externos (licença do PhysioNet não permite redistribuir)
 dados/externos/
